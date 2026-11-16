@@ -1,0 +1,267 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AfterZero - portable validity receipts for zero-result data checks
+Parameters:
+  ArtifactsBucket:
+    Type: String
+  CodeKey:
+    Type: String
+  DataBucketName:
+    Type: String
+  AdminToken:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 30
+    LoggingConfig:
+      LogGroup: !Ref RuntimeLogs
+    CodeUri:
+      Bucket: !Ref ArtifactsBucket
+      Key: !Ref CodeKey
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref State
+        BUCKET_NAME: !Ref DataBucketName
+Resources:
+  State:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: '$default'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 30
+        ThrottlingRateLimit: 10
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Environment:
+        Variables:
+          ADMIN_TOKEN: !Ref AdminToken
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource: !GetAtt State.Arn
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject]
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${DataBucketName}/*'
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /
+            Method: ANY
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /{proxy+}
+            Method: ANY
+  ManifestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt State.Arn
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${DataBucketName}/inputs/*'
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination: !GetAtt Failures.Arn
+  ManifestPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ManifestFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:s3:::${DataBucketName}'
+      SourceAccount: !Ref AWS::AccountId
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: ManifestPermission
+    Properties:
+      BucketName: !Ref DataBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-demo-evidence
+            Status: Enabled
+            ExpirationInDays: 30
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt ManifestFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: inputs/
+  Failures:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  ArchiveFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: delivery.archive
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${DataBucketName}/evidence/*'
+  PublishFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: delivery.publish
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt State.Arn
+  EvidenceWorkflow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Definition:
+        Comment: Archive a versioned receipt snapshot, then deliver to a durable consumer inbox
+        StartAt: ArchiveEvidence
+        States:
+          ArchiveEvidence:
+            Type: Task
+            Resource: !GetAtt ArchiveFunction.Arn
+            Retry:
+              - ErrorEquals: [States.TaskFailed]
+                IntervalSeconds: 2
+                BackoffRate: 2
+                MaxAttempts: 4
+            Next: DeliverToInbox
+          DeliverToInbox:
+            Type: Task
+            Resource: !GetAtt PublishFunction.Arn
+            Retry:
+              - ErrorEquals: [States.TaskFailed]
+                IntervalSeconds: 2
+                BackoffRate: 2
+                MaxAttempts: 4
+            End: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ArchiveFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref PublishFunction
+  DispatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: delivery.dispatch
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref EvidenceWorkflow
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: states:StartExecution
+              Resource: !Ref EvidenceWorkflow
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt Failures.Arn
+      Events:
+        Changes:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt State.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 10
+            MaximumRetryAttempts: 10
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            DestinationConfig:
+              OnFailure:
+                Type: SQS
+                Destination: !GetAtt Failures.Arn
+  WorkflowFailures:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source: [aws.states]
+        detail-type: [Step Functions Execution Status Change]
+        detail:
+          stateMachineArn: [!Ref EvidenceWorkflow]
+          status: [FAILED, TIMED_OUT, ABORTED]
+      Targets:
+        - Id: failureQueue
+          Arn: !GetAtt Failures.Arn
+  FailureQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref Failures]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt Failures.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt WorkflowFailures.Arn
+  RuntimeLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/afterzero/${AWS::StackName}/runtime'
+      RetentionInDays: 7
+Outputs:
+  ServiceUrl:
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  StateTable:
+    Value: !Ref State
+  DataBucket:
+    Value: !Ref DataBucket
+  EvidenceWorkflow:
+    Value: !Ref EvidenceWorkflow
+  FailureQueueUrl:
+    Value: !Ref Failures

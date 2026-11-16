@@ -1,0 +1,30 @@
+{
+  "service_url": "https://z8qah1zgdd.execute-api.ap-south-1.amazonaws.com",
+  "checks_passed": 19,
+  "checks": [
+    "deployed Lambda health",
+    "authentication enforced",
+    "missing source blocks coverage",
+    "producer identity enforcement",
+    "producer cannot attest checks",
+    "complete sources activate receipt",
+    "gap becomes unknown",
+    "gap closes in source order",
+    "S3 manifest revokes receipt",
+    "duplicate is an explicit no-op",
+    "event identity conflict rejected",
+    "service evaluator refuses false zero",
+    "registration replays intervening changes",
+    "concurrent writers preserve all revisions",
+    "scope-bound credentials",
+    "Step Functions archived verifiable S3 evidence",
+    "consumer acknowledgement persists",
+    "acknowledgement is idempotent",
+    "evidence tenant isolation"
+  ],
+  "scope_ids": [
+    "test-23aeea1f5da6",
+    "race-0d9a5b6263b2"
+  ],
+  "checked_at_epoch": 1794807309
+}
