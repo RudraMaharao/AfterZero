@@ -18,7 +18,7 @@ This repository contains the working state machine, authenticated HTTP service, 
 | S3 | Durable input manifests and versioned evidence snapshots |
 | SQS + EventBridge | Capture exhausted dispatch/manifest retries and workflow failures |
 
-![Architecture](web/architecture.svg)
+![AfterZero architecture screenshot from the live website](docs/screenshots/11-architecture.jpg)
 
 ## Live AWS evidence
 
