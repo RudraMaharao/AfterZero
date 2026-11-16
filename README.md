@@ -20,6 +20,16 @@ This repository contains the working state machine, authenticated HTTP service, 
 
 ![Architecture](web/architecture.svg)
 
+## Live AWS evidence
+
+These screenshots are from the deployed `afterzero` stack and an isolated synthetic demo run in `ap-south-1` on November 16, 2026. Run the [live workspace](https://z8qah1zgdd.execute-api.ap-south-1.amazonaws.com/) to reproduce the state transitions.
+
+| Source state | Covered | Late row revokes A | Revision gap makes B unknown | Gap closes |
+|---|---|---|---|---|
+| ![Both wait](docs/screenshots/03-live-waiting.jpg) | ![Both covered](docs/screenshots/04-live-covered.jpg) | ![A revoked, B covered](docs/screenshots/05-live-revoked.jpg) | ![B unknown](docs/screenshots/06-live-unknown.jpg) | ![B covered again](docs/screenshots/07-live-recovered.jpg) |
+
+The [CloudFormation resource list](docs/screenshots/02-cloudformation-resources.jpg), [successful Step Functions executions](docs/screenshots/08-step-functions-executions.jpg), and [versioned S3 evidence objects](docs/screenshots/10-s3-versioned-evidence.jpg) show the AWS side of that same run.
+
 There is no dedicated server, daemon, scheduled data-quality scan, or required CI/CD runner. The SAM template is deployed through CloudFormation with a manual script. Inactive workloads retain storage but perform no scheduled validation. Storage, logs and active requests incur costs; runtime/dependency updates and failure handling remain normal software responsibilities.
 
 ## Run tests
