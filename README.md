@@ -148,4 +148,3 @@ AfterZero applies established work on negative provenance, query completeness, a
 - [Oracle Continuous Query Notification](https://docs.oracle.com/en/database/oracle/oracle-database/26/odpnt/featChange.html)
 - [Braid-DB: Tracking Dubious Data](https://web.cels.anl.gov/~woz/papers/Braid-DB_2022.pdf)
 
-Built for AWS Builder Center's **Weekend Challenge: No Pipeline, No Problem**, November 2026.
