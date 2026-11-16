@@ -1,4 +1,4 @@
-# AfterZero
+# AfterZero: When a Passing Data Check Stops Being True
 
 **A passed data check has a lifetime.** AfterZero is a serverless validity service for zero-result checks. It records what was checked, whether required producers completed their inputs, and which later changes undermine the conclusion.
 
